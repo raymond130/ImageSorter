@@ -70,13 +70,6 @@ class SimpleImageClassifierModel(nn.Module):
         output = self.classifier(x)
         return output
 
-
-transform = transforms.Compose([
-    transforms.Resize((128, 128)),
-    transforms.ToTensor(),
-])
-
-
 class ClassifierTrainer:
 
 
@@ -101,8 +94,15 @@ class ClassifierTrainer:
     val_loader: DataLoader
     test_loader: DataLoader
 
+    model: SimpleImageClassifierModel
+
+    transform = transforms.Compose([
+    transforms.Resize((128, 128)),
+    transforms.ToTensor(),])
+
     def __init__(self):
         ## need class names and number of classes, from the OS
+        
         self.classes = []
         self.numclasses = 0
 
@@ -165,6 +165,7 @@ class ClassifierTrainer:
             val_loss = running_loss / len(self.val_loader.dataset)
             val_losses.append(val_loss)
             print(f"Epoch {epoch+1}/{num_epochs} - Train loss: {train_loss}, Validation loss: {val_loss}")
+        self.model = model
 
 
 
@@ -181,16 +182,20 @@ class ImageSorter:
     loadfolder: str
     destinationFolders : str
     classes: list[str]
-    images = dict[str,torch.tensor]
-    predictions = dict[str,str]
+    images: dict[str,torch.Tensor]
+    predictions: dict[str,str]
     model: nn.Module
 
 
-    def __init__(self,loadfolder, classes: list[str], model: nn.Module):
+    def __init__(self,loadfolder, classes: list[str], model: nn.Module = None):
         #initialize the model, folders and classes
         self.loadfolder = loadfolder
         self.classes = classes
-        self.model = model
+        if not model is None: self.model = model
+        else: trainModel()
+
+    def trainModel():
+        pass
 
     def loadImages(self):
 
