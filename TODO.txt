@@ -3,4 +3,6 @@
 2. add in pretrained models for tagging and searching
 3. add gui (streamlit?)
 4. refine modeling and categorizing
-5. main should just send a configuration to imageclassifier
+5. main should just send a configuration to imageclassifie
+6. write routine to randomly split a folder of sorted photos between train,test, and validate
+7. improve model training in various ways e.g. through hyperparameter tuning
