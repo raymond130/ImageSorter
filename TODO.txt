@@ -1,0 +1,6 @@
+1. refactor so that training and model are exposed
+1a. refine imageclassifier to take a configuration argument
+2. add in pretrained models for tagging and searching
+3. add gui (streamlit?)
+4. refine modeling and categorizing
+5. main should just send a configuration to imageclassifier
