@@ -1,7 +1,7 @@
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset
 from torchvision.datasets import ImageFolder
 
-class ImageDataset(Dataset):
+class ImageDataSet(Dataset):
 
     def __init__(self, data_dir, transform = None):
         self.data = ImageFolder(data_dir, transform=transform) 
@@ -16,7 +16,3 @@ class ImageDataset(Dataset):
     @property
     def classes(self):
         return self.data.classes
-
-        #image = transforms.Compose([
-         #   transforms.Resize((128, 128)),
-          #  transforms.ToTensor(),])(Image.open(image_path))
