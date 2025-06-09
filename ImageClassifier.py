@@ -10,6 +10,8 @@ from torch.utils.data import Dataset, DataLoader
 import torchvision
 import torchvision.transforms as transforms
 from torchvision.datasets import ImageFolder
+import torchvision.models
+from torchvision.models import resnet50, ResNet50_Weights
 import timm
 
 import matplotlib.pyplot as plt # For data viz
@@ -24,31 +26,26 @@ from glob import glob
 
 import shutil
 
+#preliminary classes
 class ImageDataset(Dataset):
 
-    def __init__(self, image_dir, class_names):
-        self.image_dir = image_dir
-        self.class_names = class_names
-        self.images = []
-        for class_name in class_names:
-            class_path = os.path.join(image_dir, class_name)
-            for file in os.listdir(class_path):
-                if file.endswith('.jpg') or file.endswith('.png'):
-                    self.images.append((os.path.join(class_path, file), class_name))      
+    def __init__(self, data_dir, transform = None):
+        self.data = ImageFolder(data_dir, transform=transform) 
 
 
     def __len__(self):
-        return len(self.images)
+        return len(self.data)
 
     def __getitem__(self, idx):
-        image_path, label = self.images[idx]
-        image = transforms.Compose([
-            transforms.Resize(256),
-            transforms.CenterCrop(224), 
-            transforms.ToTensor(),
-            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-        ])(image.open(image_path))
-        return image, label
+        return self.data[idx]
+    
+    @property
+    def classes(self):
+        return self.data.classes
+
+        #image = transforms.Compose([
+         #   transforms.Resize((128, 128)),
+          #  transforms.ToTensor(),])(Image.open(image_path))
 
 class SimpleImageClassifierModel(nn.Module):
     def __init__(self, num_classes=0):
@@ -79,11 +76,11 @@ class ClassifierTrainer:
 
     ## Folder names
 
-    train_folder = '../input/cards-image-datasetclassification/train/'
-    valid_folder = '../input/cards-image-datasetclassification/valid/'
-    test_folder = '../input/cards-image-datasetclassification/test/'
+    train_folder = "F:/Sorted pictures test/Train/"
+    valid_folder = "F:/Sorted pictures test/Test/"
+    test_folder = "F:/Sorted pictures test/Validate/"
 
-    classes: list[str]
+    classes : list[str]
     numclasses: int
 
     train_dataset: ImageDataset
@@ -111,14 +108,17 @@ class ClassifierTrainer:
             self.numclasses += 1
 
         ## Datasets
-        self.train_dataset = ImageDataset(self.train_folder, transform=transform, class_names=self.classes)
-        self.val_dataset = ImageDataset(self.valid_folder, transform=transform, class_names=self.classes)
-        self.test_dataset = ImageDataset(self.test_folder, transform=transform, class_names=self.classes)
+        self.train_dataset = ImageDataset(self.train_folder, transform=self.transform)
+        self.val_dataset = ImageDataset(self.valid_folder, self.transform)
+        self.test_dataset = ImageDataset(self.test_folder, self.transform)
 
         ## Loaders
         self.train_loader = DataLoader(self.train_dataset, batch_size=32, shuffle=True)
         self.val_loader = DataLoader(self.val_dataset, batch_size=32, shuffle=False)
-        self.test_loader = DataLoader(self.val_dataset, batch_size=32, shuffle=False)
+        self.test_loader = DataLoader(
+            self.val_dataset, batch_size=32, shuffle=False)
+
+        self.train_model()
 
     def train_model(self, num_epochs = 5):
 
@@ -168,8 +168,7 @@ class ClassifierTrainer:
         self.model = model
 
 
-
-
+ 
     ### Now we have a model that we can use to get predictions from
 
     ## output of the model is three components: Loading in image from the desired folder, sending to machine then passing through the model and translating to class, then moving to the appropriate folder
@@ -179,48 +178,88 @@ class ClassifierTrainer:
 
 class ImageSorter:
 
-    loadfolder: str
-    destinationFolders : str
-    classes: list[str]
-    images: dict[str,torch.Tensor]
-    predictions: dict[str,str]
-    model: nn.Module
 
 
-    def __init__(self,loadfolder, classes: list[str], model: nn.Module = None):
-        #initialize the model, folders and classes
-        self.loadfolder = loadfolder
-        self.classes = classes
-        if not model is None: self.model = model
-        else: trainModel()
+        loadfolder: str
+        destinationFolders : str
+        classes: list[str]
+        images: dict[str,torch.Tensor]
+        predictions : dict[str,str] = {}
+        model: nn.Module
+        imgTransform = transform = transforms.Compose([
+            transforms.Resize((128, 128)),
+            transforms.ToTensor()
+            ])
 
-    def trainModel():
-        pass
+        def __init__(self,loadfolder, classes: list[str], imagetransform, model: nn.Module = None):
+            #initialize the model, folders and classes
+            self.loadfolder = loadfolder
+            self.classes = classes
+            self.model = model
+            self.images = {}
+            self.predictions = {}
+            self.imgTransform = imagetransform
 
-    def loadImages(self):
+            
+            self.destinationFolders = "F:\\Sorted pictures test\\Sorted Test\\"
 
-        transform = transforms.Compose([
-        transforms.Resize((128, 128)),
-        transforms.ToTensor()
-        ])
+        def loadImages(self):
 
-        for image in tqdm(glob(self.loadfolder + "*.{jpg,png}")):
-            self.images[image] = transform(Image.open(image).convert('RGB'))
+            try:
+                carl = glob("F:\\Sorted pictures test\\Unsorted\\" + "*.JPG")
+            except:
+                print("exception!")
+            for image in tqdm(glob(self.loadfolder + "*.JPG")):
+                temp = Image.open(image).convert('RGB')
+                self.images[image] = self.imgTransform(temp).unsqueeze(0)
+            for image in tqdm(glob(self.loadfolder + "*.PNG")):
+                temp = Image.open(image).convert('RGB')
+                self.images[image] = self.imgTransform(temp).unsqueeze(0)
 
-    def get_predictions(self) -> str:
-        ## send image through model
-        self.model.eval()
-        device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-        for image in tqdm(self.images.keys):
-            image_tensor = self.images[image]
-            with torch.no_grad():
-                image_tensor = image_tensor.to(device)
-                outputs = self.model(image_tensor)
-                probabilities = torch.nn.functional.softmax(outputs, dim=1)
-                self.predictions[image] = probabilities[0]
-        
-    def move_images(self):
-        for image in self.images.keys:
-            if not os.path.exists(os.path.join(self.destinationFolders,self.predictions[image])): os.mkdir(os.path.join(self.destinationFolders,self.predictions[image]))
-            shutil.move(image,os.path.join(self.destinationFolders,self.predictions[image]) )
-        
+        def get_predictions(self):
+            ## send image through model
+            self.model.eval()
+            device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+            for image in tqdm(self.images.keys()):
+                image_tensor = self.images[image]
+                with torch.no_grad():
+                    image_tensor = image_tensor.to(device)
+                    outputs = self.model(image_tensor)
+                    probabilities = torch.nn.functional.softmax(outputs, dim=1).cpu().numpy().flatten().tolist()
+                    #probabilities = torch.max(probabilities,1)
+
+                    self.predictions[image] = self.classes[list.index(probabilities, max(probabilities))]
+                    debug = 0
+            
+        def move_images(self):
+            for image in tqdm(self.images.keys(),desc="Moving images"):
+                if not os.path.exists(os.path.join(self.destinationFolders,self.predictions[image])): os.mkdir(os.path.join(self.destinationFolders,self.predictions[image]))
+                shutil.move(image,os.path.join(self.destinationFolders,self.predictions[image]) )
+
+
+
+trainer = ClassifierTrainer()
+model = trainer.model
+
+
+imagesFolder = "F:\\Sorted pictures test\\Unsorted\\"
+#classes = ["Chester","Memes","Misc","Nature","People"]
+
+
+
+
+bongus = resnet50(weights=ResNet50_Weights.DEFAULT)
+
+#transform = ResNet50_Weights.DEFAULT.transforms() 
+
+transform = transforms.Compose([
+    transforms.Resize((128, 128)),
+    transforms.ToTensor(),])
+
+classes =ImageDataset("F:\Sorted pictures test\Test",transform=transform).classes
+
+bingus = ImageSorter(imagesFolder, classes, model, imagetransform= transform)          
+bingus.loadImages()
+bingus.get_predictions()
+bingus.move_images()
+
