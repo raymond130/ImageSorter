@@ -2,10 +2,10 @@ import torch.nn as nn
 import timm
 
 class ImageClassifierModel(nn.Module):
-    def __init__(self, num_classes=0):
+    def __init__(self, num_classes=0, pretrained=True):
         super(ImageClassifierModel, self).__init__()
         # Where we define all the parts of the model
-        self.base_model = timm.create_model('efficientnet_b0', pretrained=True)
+        self.base_model = timm.create_model('efficientnet_b0', pretrained=pretrained)
         self.features = nn.Sequential(*list(self.base_model.children())[:-1])
 
         enet_out_size = 1280

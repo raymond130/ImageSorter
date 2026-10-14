@@ -1,0 +1,10 @@
+streamlit>=1.45
+torch>=2.6
+torchvision>=0.21
+pillow
+tqdm
+timm
+# OpenAI CLIP (not the unrelated "clip" package on PyPI). Requires git.
+ftfy
+regex
+clip @ git+https://github.com/openai/CLIP.git

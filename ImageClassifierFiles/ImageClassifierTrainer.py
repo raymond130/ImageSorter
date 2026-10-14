@@ -1,3 +1,4 @@
+import logging
 import os
 import torch
 import torch.nn as nn
@@ -7,6 +8,8 @@ import torchvision.transforms as transforms
 from tqdm import tqdm
 from .ImageDataSet import ImageDataSet
 from .ImageClassifierModel import ImageClassifierModel
+
+log = logging.getLogger("imagesorter.trainer")
 
 DEFAULT_TRANSFORM = transforms.Compose([
     transforms.Resize((128, 128)),
@@ -38,16 +41,31 @@ class ImageClassifierTrainer:
         self.val_dataset = ImageDataSet(val_folder, transform=self.transform)
         self.test_dataset = ImageDataSet(test_folder, transform=self.transform)
 
+        log.info(
+            "Datasets loaded: %d classes %s; %d train / %d val / %d test images",
+            self.numclasses, self.classes, len(self.train_dataset),
+            len(self.val_dataset), len(self.test_dataset),
+        )
+
         self.train_loader = DataLoader(self.train_dataset, batch_size=32, shuffle=True)
         self.val_loader = DataLoader(self.val_dataset, batch_size=32, shuffle=False)
         self.test_loader = DataLoader(self.test_dataset, batch_size=32, shuffle=False)
 
-    def train(self, num_epochs: int = 5, learning_rate: float = 0.001, progress_callback=None):
+    def train(
+        self,
+        num_epochs: int = 5,
+        learning_rate: float = 0.001,
+        progress_callback=None,
+        batch_callback=None,
+    ):
         """
         Train the model. Does NOT auto-run on init — call explicitly.
 
         progress_callback(epoch, total_epochs, train_loss, val_loss) is called
         after each epoch if provided (useful for Streamlit progress bars).
+
+        batch_callback(phase, epoch, total_epochs, batch, total_batches) is called
+        after every batch, where phase is "train" or "val".
         """
         device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
         model = ImageClassifierModel(num_classes=self.numclasses)
@@ -57,12 +75,16 @@ class ImageClassifierTrainer:
         optimizer = optim.Adam(model.parameters(), lr=learning_rate)
 
         train_losses, val_losses = [], []
+        log.info("Training started: %d epochs, lr=%g, device=%s", num_epochs, learning_rate, device)
 
         for epoch in range(num_epochs):
             # Training phase
             model.train()
             running_loss = 0.0
-            for images, labels in tqdm(self.train_loader, desc=f"Epoch {epoch+1}/{num_epochs} — Train"):
+            n_train = len(self.train_loader)
+            for b, (images, labels) in enumerate(
+                tqdm(self.train_loader, desc=f"Epoch {epoch+1}/{num_epochs} — Train"), start=1
+            ):
                 images, labels = images.to(device), labels.to(device)
                 optimizer.zero_grad()
                 outputs = model(images)
@@ -70,6 +92,8 @@ class ImageClassifierTrainer:
                 loss.backward()
                 optimizer.step()
                 running_loss += loss.item() * labels.size(0)
+                if batch_callback:
+                    batch_callback("train", epoch + 1, num_epochs, b, n_train)
             train_loss = running_loss / len(self.train_loader.dataset)
             train_losses.append(train_loss)
 
@@ -77,26 +101,34 @@ class ImageClassifierTrainer:
             model.eval()
             running_loss = 0.0
             with torch.no_grad():
-                for images, labels in tqdm(self.val_loader, desc=f"Epoch {epoch+1}/{num_epochs} — Val"):
+                n_val = len(self.val_loader)
+                for b, (images, labels) in enumerate(
+                    tqdm(self.val_loader, desc=f"Epoch {epoch+1}/{num_epochs} — Val"), start=1
+                ):
                     images, labels = images.to(device), labels.to(device)
                     outputs = model(images)
                     loss = criterion(outputs, labels)
                     running_loss += loss.item() * labels.size(0)
+                    if batch_callback:
+                        batch_callback("val", epoch + 1, num_epochs, b, n_val)
             val_loss = running_loss / len(self.val_loader.dataset)
             val_losses.append(val_loss)
 
-            print(f"Epoch {epoch+1}/{num_epochs} — Train loss: {train_loss:.4f}, Val loss: {val_loss:.4f}")
+            log.info("Epoch %d/%d — train loss %.4f, val loss %.4f", epoch + 1, num_epochs, train_loss, val_loss)
             if progress_callback:
                 progress_callback(epoch + 1, num_epochs, train_loss, val_loss)
 
         self.model = model
+        log.info("Training finished")
         return train_losses, val_losses
 
     def save(self, path: str) -> None:
         """Save model weights and class list to a .pt checkpoint file."""
         if self.model is None:
             raise RuntimeError("No model to save — call train() first.")
+        os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
         torch.save({"state_dict": self.model.state_dict(), "classes": self.classes}, path)
+        log.info("Model saved to %s", os.path.abspath(path))
 
     @staticmethod
     def load_model(path: str) -> tuple:
@@ -104,9 +136,11 @@ class ImageClassifierTrainer:
         Load a saved model checkpoint. Returns (model, classes).
         The model is returned in eval mode, ready for inference.
         """
-        checkpoint = torch.load(path, map_location="cpu")
+        checkpoint = torch.load(path, map_location="cpu", weights_only=True)
         classes = checkpoint["classes"]
-        model = ImageClassifierModel(num_classes=len(classes))
+        log.info("Loaded model %s (classes: %s)", path, classes)
+        # Weights come from the checkpoint, so skip downloading the pretrained ones.
+        model = ImageClassifierModel(num_classes=len(classes), pretrained=False)
         model.load_state_dict(checkpoint["state_dict"])
         model.eval()
         return model, classes

@@ -1,29 +1,20 @@
-import os
-import shutil
+import logging
 import torch
 import torch.nn as nn
 import torchvision.transforms as transforms
 from tqdm import tqdm
 from PIL import Image
-from glob import glob
+from concurrent.futures import ThreadPoolExecutor
+from .FileTransfer import copy_images_to_folders, move_images_to_folders, sort_images_to_folders  # noqa: F401 (re-exported)
+from .ImageFiles import list_images
 
-IMAGE_EXTENSIONS = ("*.jpg", "*.JPG", "*.jpeg", "*.JPEG", "*.png", "*.PNG")
+log = logging.getLogger("imagesorter.classifier")
 
 DEFAULT_TRANSFORM = transforms.Compose([
     transforms.Resize((128, 128)),
     transforms.ToTensor(),
 ])
 
-
-def copy_images_to_folders(confirmed_predictions: dict, dest_folder: str) -> None:
-    """
-    Standalone helper: copies images to dest_folder/<label>/ based on a
-    {image_path: label} dict. Does not move or delete originals.
-    """
-    for image_path, label in tqdm(confirmed_predictions.items(), desc="Copying images"):
-        dest_dir = os.path.join(dest_folder, label)
-        os.makedirs(dest_dir, exist_ok=True)
-        shutil.copy2(image_path, dest_dir)
 
 
 class ImageClassifier:
@@ -39,32 +30,51 @@ class ImageClassifier:
         self.classes = classes
         self.model = model
         self.imgTransform = imagetransform or DEFAULT_TRANSFORM
-        self.images: dict = {}
         self.predictions: dict = {}
 
-    def loadImages(self):
-        self.images = {}
-        for ext in IMAGE_EXTENSIONS:
-            pattern = os.path.join(self.loadfolder, ext)
-            for image_path in tqdm(glob(pattern), desc=f"Loading {ext}"):
-                try:
-                    img = Image.open(image_path).convert("RGB")
-                    self.images[image_path] = self.imgTransform(img).unsqueeze(0)
-                except Exception as e:
-                    print(f"Skipping {image_path}: {e}")
+    def _load_tensor(self, image_path: str):
+        """Decode and transform one image; returns None if it can't be read."""
+        try:
+            with Image.open(image_path) as img:
+                return self.imgTransform(img.convert("RGB"))
+        except Exception as e:
+            log.warning("Skipping %s: %s", image_path, e)
+            return None
 
-    def get_predictions(self):
+    def get_predictions(self, progress_callback=None, batch_size: int = 32, workers: int = 4):
+        """
+        Predict a label for every image in loadfolder.
+
+        Images are decoded on demand in batches (several threads at a time), so
+        the whole folder is never held in memory. progress_callback(done, total)
+        is called after each batch if provided.
+        """
         if self.model is None:
             raise ValueError("No model set — assign one before calling get_predictions().")
         device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
         self.model.eval()
         self.model.to(device)
         self.predictions = {}
-        for image_path, tensor in tqdm(self.images.items(), desc="Predicting"):
-            with torch.no_grad():
-                outputs = self.model(tensor.to(device))
-                probs = torch.nn.functional.softmax(outputs, dim=1).cpu().numpy().flatten().tolist()
-            self.predictions[image_path] = self.classes[probs.index(max(probs))]
+
+        paths = list_images(self.loadfolder)
+        total = len(paths)
+        log.info("Predicting %d images from %s", total, self.loadfolder)
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            for start in tqdm(range(0, total, batch_size), desc="Predicting"):
+                batch_paths = paths[start : start + batch_size]
+                loaded = [
+                    (p, t) for p, t in zip(batch_paths, pool.map(self._load_tensor, batch_paths))
+                    if t is not None
+                ]
+                if loaded:
+                    batch = torch.stack([t for _, t in loaded]).to(device)
+                    with torch.no_grad():
+                        indices = self.model(batch).argmax(dim=1).tolist()
+                    for (path, _), idx in zip(loaded, indices):
+                        self.predictions[path] = self.classes[idx]
+                if progress_callback:
+                    progress_callback(min(start + batch_size, total), total)
+        log.info("Predicted %d of %d images", len(self.predictions), total)
 
     def stage_copies(self, dest_folder: str, confirmed_predictions: dict = None) -> None:
         """Copy images to dest_folder/<label>/ without removing originals."""
@@ -74,7 +84,4 @@ class ImageClassifier:
     def move_images(self, dest_folder: str, confirmed_predictions: dict = None) -> None:
         """Move images to dest_folder/<label>/ (destructive — originals removed)."""
         preds = confirmed_predictions if confirmed_predictions is not None else self.predictions
-        for image_path, label in tqdm(preds.items(), desc="Moving images"):
-            dest_dir = os.path.join(dest_folder, label)
-            os.makedirs(dest_dir, exist_ok=True)
-            shutil.move(image_path, dest_dir)
+        move_images_to_folders(preds, dest_folder)
